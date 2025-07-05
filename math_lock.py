@@ -139,18 +139,24 @@ class Delegate(NSObject):
         self.window.makeFirstResponder_(self.ans_field)
 
     # Enter pressed
-    def check_(self, *_):
+    def check_(self, sender):
         try:
             guess = int(self.ans_field.stringValue().strip())
         except ValueError:
-            self.flash_(False); self.ans_field.setStringValue_(""); return
+            self.flash_(False)
+            self.ans_field.setStringValue_("")
+            return
+
         if guess == self.answer:
-            self.remaining -= 1; self.flash_(True)
+            self.remaining -= 1
+            self.flash_(True)
             if self.remaining == 0:
-                AppKit.NSApp.terminate_(None); return
+                AppKit.NSApp.terminate_(None)
+                return
             self.next_q()
         else:
-            self.flash_(False); self.ans_field.setStringValue_("")
+            self.flash_(False)
+            self.ans_field.setStringValue_("")
 
 if __name__ == '__main__':
     AppKit.NSApplication.sharedApplication()
