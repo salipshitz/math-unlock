@@ -101,6 +101,7 @@ class Delegate(NSObject):
         self.window.makeKeyAndOrderFront_(None)
         self.window.setInitialFirstResponder_(self.ans_field)
         self.window.makeFirstResponder_(self.ans_field)
+        self.ans_field.selectText_(None)
 
         # Fallback timer in all run-loop modes so ensureFocus_ actually fires
         timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
@@ -114,6 +115,7 @@ class Delegate(NSObject):
     def ensureFocus_(self, timer):
         if self.window.firstResponder() != self.ans_field:
             self.window.makeFirstResponder_(self.ans_field)
+            self.ans_field.selectText_(None)
 
     # Feedback flash
     def flash_(self, ok: bool):
