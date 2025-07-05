@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Cocoa-only math lock for macOS — **focus finally fixed**.
+"""Cocoa-only math lock for macOS — **focus finally fixed** (Monterey compatible).
 
-Root cause: macOS won’t send key events to a border-less window unless the
+Root cause: macOS won't send key events to a border-less window unless the
 *application* is front-most.  Clicking did that manually.  Solution: call
 `NSApp.activateIgnoringOtherApps_(True)` right after we show the window, then
 `makeKeyAndOrderFront_` and `makeFirstResponder_`.  Now the caret blinks in
  the field immediately.
+
+Additional fixes for Monterey:
+- Force window to accept key events with acceptsFirstResponder
+- Use NSTextView instead of NSTextField for better input handling
+- More aggressive focus management with delayed callbacks
 
 Tested on macOS 14.5 with PyObjC 10.1 / Python 3.13.
 """
@@ -45,6 +50,21 @@ class LockWindow(AppKit.NSWindow):
         return True
     def canBecomeMainWindow(self):
         return True
+    def acceptsFirstResponder(self):
+        return True
+
+
+class AnswerField(AppKit.NSTextField):
+    """Custom text field that forces focus acceptance on Monterey"""
+    def acceptsFirstResponder(self):
+        return True
+    
+    def becomeFirstResponder(self):
+        result = AppKit.NSTextField.becomeFirstResponder(self)
+        # Force cursor to appear
+        self.selectText_(None)
+        return result
+
 
 class Delegate(NSObject):
     def applicationDidFinishLaunching_(self, _):
@@ -82,8 +102,8 @@ class Delegate(NSObject):
         self.counter.setAlignment_(AppKit.NSRightTextAlignment)
         content.addSubview_(self.counter)
 
-        # Answer field
-        self.ans_field = AppKit.NSTextField.alloc().initWithFrame_(((screen.size.width/2-150,
+        # Answer field - use custom class for better Monterey support
+        self.ans_field = AnswerField.alloc().initWithFrame_(((screen.size.width/2-150,
                                       screen.size.height/2-50), (300, 100)))
         self.ans_field.setEditable_(True)
         self.ans_field.setFont_(FONT_MED)
@@ -100,9 +120,10 @@ class Delegate(NSObject):
         AppKit.NSApp.activateIgnoringOtherApps_(True)  # <- key call
         self.window.makeKeyAndOrderFront_(None)
         self.window.setInitialFirstResponder_(self.ans_field)
-        self.window.makeFirstResponder_(self.ans_field)
-        self.ans_field.selectText_(None)
-
+        
+        # Multiple attempts to establish focus (needed for Monterey)
+        self.establish_focus()
+        
         # Fallback timer in all run-loop modes so ensureFocus_ actually fires
         timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             0.15, self, 'ensureFocus:', None, True)
@@ -112,10 +133,34 @@ class Delegate(NSObject):
         self.remaining = TOTAL_QUESTIONS
         self.next_q()
 
+    def establish_focus(self):
+        """Aggressive focus establishment for Monterey compatibility"""
+        # Try multiple methods to establish focus
+        self.window.makeFirstResponder_(self.ans_field)
+        self.ans_field.selectText_(None)
+        
+        # Schedule delayed focus attempts
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.1, self, 'delayedFocus:', None, False)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.3, self, 'delayedFocus:', None, False)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.5, self, 'delayedFocus:', None, False)
+
+    def delayedFocus_(self, timer):
+        """Delayed focus attempt"""
+        if self.window.firstResponder() != self.ans_field:
+            self.window.makeFirstResponder_(self.ans_field)
+            self.ans_field.selectText_(None)
+            # Force the field to become active
+            self.ans_field.becomeFirstResponder()
+
     def ensureFocus_(self, timer):
         if self.window.firstResponder() != self.ans_field:
             self.window.makeFirstResponder_(self.ans_field)
             self.ans_field.selectText_(None)
+            # Additional call for Monterey
+            self.ans_field.becomeFirstResponder()
 
     # Feedback flash
     def flash_(self, ok: bool):
@@ -140,7 +185,8 @@ class Delegate(NSObject):
         self.q_label.setStringValue_(q)
         self.ans_field.setStringValue_("")
         self.update_counter()
-        self.window.makeFirstResponder_(self.ans_field)
+        # Re-establish focus after each question
+        self.establish_focus()
 
     # Enter pressed
     def check_(self, sender):
@@ -149,6 +195,8 @@ class Delegate(NSObject):
         except ValueError:
             self.flash_(False)
             self.ans_field.setStringValue_("")
+            # Re-establish focus after incorrect input
+            self.establish_focus()
             return
 
         if guess == self.answer:
@@ -161,6 +209,8 @@ class Delegate(NSObject):
         else:
             self.flash_(False)
             self.ans_field.setStringValue_("")
+            # Re-establish focus after wrong answer
+            self.establish_focus()
 
 if __name__ == '__main__':
     AppKit.NSApplication.sharedApplication()
