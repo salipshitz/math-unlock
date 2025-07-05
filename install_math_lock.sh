@@ -1,90 +1,214 @@
 #!/usr/bin/env bash
-# One-shot installer for the “math-lock” quiz.
-# It sets up:
-#   • a launchd (macOS’s built-in scheduler/daemon manager) job every 20 min
-#   • SleepWatcher (a tiny utility) to run the quiz each time the Mac unlocks
-
+# Installs "math-lock" so it runs at every unlock AND every 20 min, without looping.
 set -euo pipefail
 
-### 1. Where will we keep the Python file?  ###################################
+# ─── paths ──────────────────────────────────────────────────────────────────────
 LOCK_DIR="$HOME/.math_lock"
-LOCK_PY="$LOCK_DIR/math_lock.py"
-
-mkdir -p "$LOCK_DIR"
-
-# If the user is running the installer from the same folder as math_lock.py,
-# copy it in; otherwise assume they’ve already put it there.
-if [[ ! -f "$LOCK_PY" ]]; then
-  if [[ -f "$(dirname "$0")/math_lock.py" ]]; then
-    cp "$(dirname "$0")/math_lock.py" "$LOCK_PY"
-  else
-    echo " ❗  math_lock.py not found. Put it in $LOCK_DIR and rerun." >&2
-    exit 1
-  fi
-fi
-chmod 755 "$LOCK_PY"
-
-PYTHON_BIN="$(command -v python3 || true)"
-if [[ -z "$PYTHON_BIN" ]]; then
-  echo " ❗  python3 not found. Install Xcode Command Line Tools or Homebrew Python." >&2
-  exit 1
-fi
-
-### 2. Ensure Homebrew exists (needed for SleepWatcher)  ######################
-if ! command -v brew >/dev/null 2>&1; then
-  echo " → Installing Homebrew (this can take a couple of minutes)…"
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
-
-### 3. Install & start SleepWatcher (runs scripts at wake/unlock) #############
-if ! brew list --formula | grep -q '^sleepwatcher$'; then
-  echo " → Installing SleepWatcher…"
-  brew install sleepwatcher
-fi
-
-echo " → Creating ~/.wakeup script…"
-cat > "$HOME/.wakeup" <<EOF
-#!/usr/bin/env bash
-"$PYTHON_BIN" "$LOCK_PY"
-EOF
-chmod 700 "$HOME/.wakeup"
-
-echo " → Starting SleepWatcher daemon…"
-brew services restart sleepwatcher >/dev/null
-
-### 4. Create launchd job for 20-minute intervals #############################
+PY_SRC="$(dirname "$0")/math_lock.py"          # expected next to this installer
+PY_FILE="$LOCK_DIR/math_lock.py"
+WRAP="$LOCK_DIR/run_once.sh"
+MONITOR="$LOCK_DIR/screen_monitor.py"
 PLIST="$HOME/Library/LaunchAgents/com.mathlock.quiz.plist"
+INTERVAL=1200      # 20 min
+THROTTLE=15        # minimum seconds between runs
+PYTHON="$(command -v python3)"
 
-cat > "$PLIST" <<EOF
+[[ -z $PYTHON ]] && { echo "python3 not found"; exit 1; }
+
+# ─── copy python code ───────────────────────────────────────────────────────────
+mkdir -p "$LOCK_DIR"
+[[ -f $PY_SRC ]] || { echo "math_lock.py not found beside installer"; exit 1; }
+cp "$PY_SRC" "$PY_FILE"
+chmod 755 "$PY_FILE"
+
+# ─── create screen monitor daemon ──────────────────────────────────────────────
+cat >"$MONITOR" <<'EOF'
+#!/usr/bin/env python3
+"""Monitor for screen wake events and trigger math lock."""
+import subprocess
+import time
+import os
+from Quartz import CGDisplayIsAsleep, CGMainDisplayID
+
+def is_screen_asleep():
+    """Check if the main display is asleep."""
+    try:
+        return CGDisplayIsAsleep(CGMainDisplayID())
+    except:
+        return False
+
+def should_run_math_lock():
+    """Check throttling to see if we should run the math lock."""
+    stamp_file = "/tmp/.math_lock_last"
+    throttle_seconds = 15
+    
+    if os.path.exists(stamp_file):
+        try:
+            with open(stamp_file, 'r') as f:
+                last_run = int(f.read().strip())
+            if time.time() - last_run < throttle_seconds:
+                return False
+        except:
+            pass
+    
+    # Update timestamp
+    with open(stamp_file, 'w') as f:
+        f.write(str(int(time.time())))
+    
+    return True
+
+def run_math_lock():
+    """Run the math lock if throttling allows."""
+    if should_run_math_lock():
+        try:
+            subprocess.run(["/usr/bin/python3", os.path.expanduser("~/.math_lock/math_lock.py")])
+        except Exception as e:
+            print(f"Error running math lock: {e}")
+
+def main():
+    """Monitor screen sleep/wake cycle."""
+    was_asleep = is_screen_asleep()
+    
+    while True:
+        time.sleep(1)  # Check every second
+        
+        try:
+            currently_asleep = is_screen_asleep()
+            
+            # If screen just woke up (was asleep, now awake)
+            if was_asleep and not currently_asleep:
+                print(f"Screen woke up at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                run_math_lock()
+            
+            was_asleep = currently_asleep
+            
+        except Exception as e:
+            print(f"Error in monitor loop: {e}")
+            time.sleep(5)  # Wait longer on error
+
+if __name__ == "__main__":
+    main()
+EOF
+chmod 755 "$MONITOR"
+
+# ─── wrapper for manual execution ──────────────────────────────────────────────
+cat >"$WRAP" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+# More robust throttling using lockfile
+LOCK_FILE="/tmp/.math_lock_running"
+STAMP_FILE="/tmp/.math_lock_last"
+THROTTLE_SECONDS=$THROTTLE
+
+# Check if already running
+if [[ -f "\$LOCK_FILE" ]]; then
+    # Check if the process is actually running
+    if ps -p "\$(cat "\$LOCK_FILE")" >/dev/null 2>&1; then
+        exit 0  # Already running
+    else
+        rm -f "\$LOCK_FILE"  # Stale lock file
+    fi
+fi
+
+# Create lock file with current PID
+echo \$\$ > "\$LOCK_FILE"
+
+# Function to cleanup on exit
+cleanup() {
+    rm -f "\$LOCK_FILE"
+}
+trap cleanup EXIT
+
+# Check throttle timing
+now=\$(date +%s)
+if [[ -f "\$STAMP_FILE" ]]; then
+    last=\$(cat "\$STAMP_FILE")
+    elapsed=\$((now - last))
+    if [[ \$elapsed -lt \$THROTTLE_SECONDS ]]; then
+        exit 0  # Too soon
+    fi
+fi
+
+# Update timestamp
+echo \$now > "\$STAMP_FILE"
+
+# Run the math lock
+"$PYTHON" "$PY_FILE"
+EOF
+chmod 700 "$WRAP"
+
+# ─── clean old helpers ──────────────────────────────────────────────────────────
+launchctl unload "$PLIST" >/dev/null 2>&1 || true
+brew services stop sleepwatcher >/dev/null 2>&1 || true
+
+# ─── launchd job with screen monitor and interval ──────────────────────────────
+cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>            <string>com.mathlock.quiz</string>
-
-  <!-- What to run -->
-  <key>ProgramArguments</key> <array>
-      <string>$PYTHON_BIN</string>
-      <string>$LOCK_PY</string>
+  <key>Label</key>
+  <string>com.mathlock.quiz</string>
+  
+  <key>ProgramArguments</key>
+  <array>
+    <string>$PYTHON</string>
+    <string>$MONITOR</string>
   </array>
-
-  <!-- Fire at login AND every 1 200 s (20 min) -->
-  <key>RunAtLoad</key>        <true/>
-  <key>StartInterval</key>    <integer>1200</integer>
-
-  <!-- Throw output into /tmp so nothing clutters user folders -->
-  <key>StandardOutPath</key>  <string>/tmp/mathlock.out</string>
-  <key>StandardErrorPath</key><string>/tmp/mathlock.err</string>
+  
+  <key>RunAtLoad</key>
+  <true/>
+  
+  <key>KeepAlive</key>
+  <true/>
+  
+  <key>StandardOutPath</key>
+  <string>/tmp/mathlock.out</string>
+  
+  <key>StandardErrorPath</key>
+  <string>/tmp/mathlock.err</string>
+  
+  <key>ProcessType</key>
+  <string>Interactive</string>
 </dict>
 </plist>
 EOF
 
-echo " → Loading launchd job…"
-launchctl unload "$PLIST" >/dev/null 2>&1 || true
-launchctl load "$PLIST"
+# ─── create separate plist for 20-minute interval ──────────────────────────────
+INTERVAL_PLIST="$HOME/Library/LaunchAgents/com.mathlock.interval.plist"
+cat >"$INTERVAL_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mathlock.interval</string>
+  
+  <key>ProgramArguments</key>
+  <array>
+    <string>$WRAP</string>
+  </array>
+  
+  <key>StartInterval</key>
+  <integer>$INTERVAL</integer>
+  
+  <key>StandardOutPath</key>
+  <string>/tmp/mathlock_interval.out</string>
+  
+  <key>StandardErrorPath</key>
+  <string>/tmp/mathlock_interval.err</string>
+</dict>
+</plist>
+EOF
 
-echo
-echo "✅  Math-lock is now active."
-echo "   • Pops up every Mac unlock (handled by SleepWatcher)."
-echo "   • Pops up every 20 minutes while logged in (handled by launchd)."
-echo "   Remove:  launchctl unload \"$PLIST\" && brew services stop sleepwatcher"
+# Load both plists
+launchctl load "$PLIST"
+launchctl load "$INTERVAL_PLIST"
+
+echo "✅ math-lock active — fires each screen wake & every 20 min."
+echo "📋 To remove: "
+echo "   launchctl unload \"$PLIST\" && rm -f \"$PLIST\""
+echo "   launchctl unload \"$INTERVAL_PLIST\" && rm -f \"$INTERVAL_PLIST\""
+echo "   rm -rf \"$LOCK_DIR\""
+echo "🔍 To debug: tail -f /tmp/mathlock.out /tmp/mathlock.err"
