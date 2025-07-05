@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Installs "math-lock" so it runs at every unlock AND every 20 min, without looping.
 set -euo pipefail
-
 # ─── paths ──────────────────────────────────────────────────────────────────────
 LOCK_DIR="$HOME/.math_lock"
 PY_SRC="$(dirname "$0")/math_lock.py"          # expected next to this installer
@@ -16,6 +15,7 @@ PYTHON="$(command -v python3)"
 [[ -z $PYTHON ]] && { echo "python3 not found"; exit 1; }
 
 # ─── copy python code ───────────────────────────────────────────────────────────
+pip install pyobjc
 mkdir -p "$LOCK_DIR"
 [[ -f $PY_SRC ]] || { echo "math_lock.py not found beside installer"; exit 1; }
 cp "$PY_SRC" "$PY_FILE"

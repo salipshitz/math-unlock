@@ -74,7 +74,6 @@ class AnswerTextView(AppKit.NSTextView):
             self.setUsesRuler_(False)
             self.setVerticallyResizable_(False)
             self.setHorizontallyResizable_(False)
-            self.setFieldEditor_(True)
             self.setEditable_(True)
             self.setSelectable_(True)
             self.delegate = None
