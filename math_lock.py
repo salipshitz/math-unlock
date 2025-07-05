@@ -102,9 +102,11 @@ class Delegate(NSObject):
         self.window.setInitialFirstResponder_(self.ans_field)
         self.window.makeFirstResponder_(self.ans_field)
 
-        # Fallback timer in case launch animation steals focus
-        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+        # Fallback timer in all run-loop modes so ensureFocus_ actually fires
+        timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             0.15, self, 'ensureFocus:', None, False)
+        AppKit.NSRunLoop.mainRunLoop().addTimer_forMode_(timer,
+            AppKit.NSRunLoopCommonModes)
 
         self.remaining = TOTAL_QUESTIONS
         self.next_q()
