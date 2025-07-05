@@ -8,15 +8,15 @@ Root cause: macOS won't send key events to a border-less window unless the
  the field immediately.
 
 Additional fixes for Monterey:
-- Force window to accept key events with acceptsFirstResponder
-- Use NSTextView instead of NSTextField for better input handling
-- More aggressive focus management with delayed callbacks
+- Use NSTextView instead of NSTextField for reliable input handling
+- More aggressive focus and field editor management
+- Force cursor visibility with explicit selection
 
 Tested on macOS 14.5 with PyObjC 10.1 / Python 3.13.
 """
 from __future__ import annotations
 import random, AppKit
-from Foundation import NSObject, NSTimer, NSString
+from Foundation import NSObject, NSTimer, NSString, NSRange
 
 TOTAL_QUESTIONS = 3
 FONT_BIG   = AppKit.NSFont.systemFontOfSize_(64)
@@ -54,16 +54,47 @@ class LockWindow(AppKit.NSWindow):
         return True
 
 
-class AnswerField(AppKit.NSTextField):
-    """Custom text field that forces focus acceptance on Monterey"""
+class AnswerTextView(AppKit.NSTextView):
+    """Custom text view that handles enter key and forces focus"""
+    def initWithFrame_(self, frame):
+        self = AppKit.NSTextView.initWithFrame_(self, frame)
+        if self:
+            self.setFont_(FONT_MED)
+            self.setAlignment_(AppKit.NSCenterTextAlignment)
+            self.setTextColor_(AppKit.NSColor.whiteColor())
+            self.setBackgroundColor_(AppKit.NSColor.blackColor())
+            self.setInsertionPointColor_(AppKit.NSColor.whiteColor())
+            self.setSelectedTextAttributes_({
+                AppKit.NSBackgroundColorAttributeName: AppKit.NSColor.darkGrayColor(),
+                AppKit.NSForegroundColorAttributeName: AppKit.NSColor.whiteColor()
+            })
+            self.setRichText_(False)
+            self.setImportsGraphics_(False)
+            self.setUsesFontPanel_(False)
+            self.setUsesRuler_(False)
+            self.setVerticallyResizable_(False)
+            self.setHorizontallyResizable_(False)
+            self.setFieldEditor_(True)
+            self.delegate = None
+        return self
+    
     def acceptsFirstResponder(self):
         return True
     
     def becomeFirstResponder(self):
-        result = AppKit.NSTextField.becomeFirstResponder(self)
-        # Force cursor to appear
-        self.selectText_(None)
+        result = AppKit.NSTextView.becomeFirstResponder(self)
+        if result:
+            # Force cursor to appear at end of text
+            text_length = len(self.string())
+            self.setSelectedRange_(NSRange(text_length, 0))
         return result
+    
+    def keyDown_(self, event):
+        if event.keyCode() == 36:  # Enter key
+            if self.delegate and hasattr(self.delegate, 'textViewDidPressEnter_'):
+                self.delegate.textViewDidPressEnter_(self)
+        else:
+            AppKit.NSTextView.keyDown_(self, event)
 
 
 class Delegate(NSObject):
@@ -102,18 +133,21 @@ class Delegate(NSObject):
         self.counter.setAlignment_(AppKit.NSRightTextAlignment)
         content.addSubview_(self.counter)
 
-        # Answer field - use custom class for better Monterey support
-        self.ans_field = AnswerField.alloc().initWithFrame_(((screen.size.width/2-150,
-                                      screen.size.height/2-50), (300, 100)))
-        self.ans_field.setEditable_(True)
-        self.ans_field.setFont_(FONT_MED)
-        self.ans_field.setAlignment_(AppKit.NSCenterTextAlignment)
-        self.ans_field.setTextColor_(AppKit.NSColor.whiteColor())
-        self.ans_field.setBackgroundColor_(AppKit.NSColor.blackColor())
-        self.ans_field.setBezeled_(True)
-        self.ans_field.setBezelStyle_(AppKit.NSTextFieldSquareBezel)
-        content.addSubview_(self.ans_field)
-        self.ans_field.setTarget_(self); self.ans_field.setAction_("check:")
+        # Answer text view with scroll view container
+        scroll_frame = ((screen.size.width/2-150, screen.size.height/2-50), (300, 100))
+        self.scroll_view = AppKit.NSScrollView.alloc().initWithFrame_(scroll_frame)
+        self.scroll_view.setHasVerticalScroller_(False)
+        self.scroll_view.setHasHorizontalScroller_(False)
+        self.scroll_view.setBorderType_(AppKit.NSBezelBorder)
+        self.scroll_view.setBackgroundColor_(AppKit.NSColor.blackColor())
+        
+        # Create text view
+        text_frame = self.scroll_view.contentView().bounds()
+        self.ans_field = AnswerTextView.alloc().initWithFrame_(text_frame)
+        self.ans_field.delegate = self
+        
+        self.scroll_view.setDocumentView_(self.ans_field)
+        content.addSubview_(self.scroll_view)
 
         # Put app & window front-most and focus the field
         self.window.orderFrontRegardless()
@@ -137,7 +171,7 @@ class Delegate(NSObject):
         """Aggressive focus establishment for Monterey compatibility"""
         # Try multiple methods to establish focus
         self.window.makeFirstResponder_(self.ans_field)
-        self.ans_field.selectText_(None)
+        self.ans_field.setSelectedRange_(NSRange(0, 0))
         
         # Schedule delayed focus attempts
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
@@ -151,16 +185,38 @@ class Delegate(NSObject):
         """Delayed focus attempt"""
         if self.window.firstResponder() != self.ans_field:
             self.window.makeFirstResponder_(self.ans_field)
-            self.ans_field.selectText_(None)
-            # Force the field to become active
-            self.ans_field.becomeFirstResponder()
+            self.ans_field.setSelectedRange_(NSRange(0, 0))
 
     def ensureFocus_(self, timer):
         if self.window.firstResponder() != self.ans_field:
             self.window.makeFirstResponder_(self.ans_field)
-            self.ans_field.selectText_(None)
-            # Additional call for Monterey
-            self.ans_field.becomeFirstResponder()
+            self.ans_field.setSelectedRange_(NSRange(0, 0))
+
+    def textViewDidPressEnter_(self, textView):
+        """Called when Enter is pressed in the text view"""
+        self.check_answer()
+
+    def check_answer(self):
+        """Check the answer and handle response"""
+        try:
+            guess = int(self.ans_field.string().strip())
+        except ValueError:
+            self.flash_(False)
+            self.ans_field.setString_("")
+            self.establish_focus()
+            return
+
+        if guess == self.answer:
+            self.remaining -= 1
+            self.flash_(True)
+            if self.remaining == 0:
+                AppKit.NSApp.terminate_(None)
+                return
+            self.next_q()
+        else:
+            self.flash_(False)
+            self.ans_field.setString_("")
+            self.establish_focus()
 
     # Feedback flash
     def flash_(self, ok: bool):
@@ -183,34 +239,10 @@ class Delegate(NSObject):
     def next_q(self):
         q, self.answer = new_question()
         self.q_label.setStringValue_(q)
-        self.ans_field.setStringValue_("")
+        self.ans_field.setString_("")
         self.update_counter()
         # Re-establish focus after each question
         self.establish_focus()
-
-    # Enter pressed
-    def check_(self, sender):
-        try:
-            guess = int(self.ans_field.stringValue().strip())
-        except ValueError:
-            self.flash_(False)
-            self.ans_field.setStringValue_("")
-            # Re-establish focus after incorrect input
-            self.establish_focus()
-            return
-
-        if guess == self.answer:
-            self.remaining -= 1
-            self.flash_(True)
-            if self.remaining == 0:
-                AppKit.NSApp.terminate_(None)
-                return
-            self.next_q()
-        else:
-            self.flash_(False)
-            self.ans_field.setStringValue_("")
-            # Re-establish focus after wrong answer
-            self.establish_focus()
 
 if __name__ == '__main__':
     AppKit.NSApplication.sharedApplication()
