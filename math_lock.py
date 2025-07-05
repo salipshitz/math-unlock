@@ -127,6 +127,8 @@ class Delegate(NSObject):
         self.window.setBackgroundColor_(AppKit.NSColor.blackColor())
 
         # Presentation options (Force-Quit still allowed)
+        # Treat this process as a regular GUI app so it can grab focus
+        AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
         hide = (AppKit.NSApplicationPresentationHideDock |
                 AppKit.NSApplicationPresentationHideMenuBar |
                 AppKit.NSApplicationPresentationDisableAppleMenu |
@@ -168,8 +170,9 @@ class Delegate(NSObject):
         self.scroll_view.setDocumentView_(self.ans_field)
         content.addSubview_(self.scroll_view)
 
-        # Put app & window front‑most and focus the field
-        AppKit.NSApp.activateIgnoringOtherApps_(True)  # activate app first
+        # Activate the running app and bring window to front
+        AppKit.NSRunningApplication.currentApplication()\
+            .activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
         self.window.orderFrontRegardless()
         self.window.makeKeyAndOrderFront_(None)
         self.window.setInitialFirstResponder_(self.ans_field)
