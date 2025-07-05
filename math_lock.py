@@ -75,6 +75,8 @@ class AnswerTextView(AppKit.NSTextView):
             self.setVerticallyResizable_(False)
             self.setHorizontallyResizable_(False)
             self.setFieldEditor_(True)
+            self.setEditable_(True)
+            self.setSelectable_(True)
             self.delegate = None
         return self
     
@@ -90,11 +92,29 @@ class AnswerTextView(AppKit.NSTextView):
         return result
     
     def keyDown_(self, event):
-        if event.keyCode() == 36:  # Enter key
+        key_code = event.keyCode()
+        chars = event.characters()
+        
+        if key_code == 36:  # Enter key
             if self.delegate and hasattr(self.delegate, 'textViewDidPressEnter_'):
                 self.delegate.textViewDidPressEnter_(self)
-        else:
+        elif chars and (chars.isdigit() or chars in '+-'):
+            # Allow only numbers and basic math symbols
             AppKit.NSTextView.keyDown_(self, event)
+        elif key_code == 51:  # Backspace
+            AppKit.NSTextView.keyDown_(self, event)
+        # Ignore other keys
+    
+    def insertText_(self, text):
+        # Only allow digits and basic math symbols
+        if isinstance(text, str) and (text.isdigit() or text in '+-'):
+            AppKit.NSTextView.insertText_(self, text)
+    
+    def shouldChangeTextInRange_replacementString_(self, range, text):
+        # Allow deletion (empty string) or digits/math symbols
+        if not text or text.isdigit() or text in '+-':
+            return True
+        return False
 
 
 class Delegate(NSObject):
