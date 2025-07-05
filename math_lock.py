@@ -105,7 +105,7 @@ class Delegate(NSObject):
 
         # Fallback timer in all run-loop modes so ensureFocus_ actually fires
         timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
-            0.15, self, 'ensureFocus:', None, False)
+            0.15, self, 'ensureFocus:', None, True)
         AppKit.NSRunLoop.mainRunLoop().addTimer_forMode_(timer,
             AppKit.NSRunLoopCommonModes)
 
