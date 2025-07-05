@@ -34,13 +34,20 @@ OPS = [
 def new_question():
     op, fn = random.choice(OPS)
     if op == '×':
-        a, b = random.randint(1, 12), random.randint(1, 12)
+        a, b = random.randint(2, 12), random.randint(2, 12)
     elif op == '÷':
-        b = random.randint(1, 7)
-        q = random.randint(1, 7)          # quotient
-        a = b * q                         # ensures a ÷ b == integer
-    else:
-        a, b = random.randint(1, 20), random.randint(1, 20)
+        flag = False
+        while not flag:
+            b = random.randint(3, 7)
+            q = random.randint(1, 25)          # quotient
+            a = b * q                         # ensures a ÷ b == integer
+            if a != b: flag = True
+
+    else: # addition or subtraction
+        flag = False
+        while not flag:
+            a, b = random.randint(7, 25), random.randint(7, 25)
+            if a != b: flag = True
         
     return f"{a} {op} {b} =", fn(a, b)
 
