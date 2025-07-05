@@ -168,9 +168,9 @@ class Delegate(NSObject):
         self.scroll_view.setDocumentView_(self.ans_field)
         content.addSubview_(self.scroll_view)
 
-        # Put app & window front-most and focus the field
+        # Put app & window front‑most and focus the field
+        AppKit.NSApp.activateIgnoringOtherApps_(True)  # activate app first
         self.window.orderFrontRegardless()
-        AppKit.NSApp.activateIgnoringOtherApps_(True)  # <- key call
         self.window.makeKeyAndOrderFront_(None)
         self.window.setInitialFirstResponder_(self.ans_field)
         
