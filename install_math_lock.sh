@@ -28,6 +28,7 @@ cat >"$MONITOR" <<'EOF'
 import subprocess
 import time
 import os
+import sys
 from Quartz import CGDisplayIsAsleep, CGMainDisplayID
 
 def is_screen_asleep():
@@ -61,7 +62,7 @@ def run_math_lock():
     """Run the math lock if throttling allows."""
     if should_run_math_lock():
         try:
-            subprocess.run(["/usr/bin/python3", os.path.expanduser("~/.math_lock/math_lock.py")])
+            subprocess.run([sys.executable, os.path.expanduser("~/.math_lock/math_lock.py")])
         except Exception as e:
             print(f"Error running math lock: {e}")
 
