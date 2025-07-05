@@ -109,7 +109,7 @@ class Delegate(NSObject):
         self.remaining = TOTAL_QUESTIONS
         self.next_q()
 
-    def ensureFocus_(self, *_):
+    def ensureFocus_(self, timer):
         if self.window.firstResponder() != self.ans_field:
             self.window.makeFirstResponder_(self.ans_field)
 
@@ -119,7 +119,7 @@ class Delegate(NSObject):
         self.window.setBackgroundColor_(color)
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.35, self, 'resetColor:', None, False)
-    def resetColor_(self, *_):
+    def resetColor_(self, timer):
         self.window.setBackgroundColor_(AppKit.NSColor.blackColor())
 
     # Counter
