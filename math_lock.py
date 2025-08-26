@@ -19,10 +19,12 @@ import random, AppKit
 from Foundation import NSObject, NSTimer, NSString, NSRange
 
 TOTAL_QUESTIONS = 3
+FAIL_THRESHOLD = 2
 FONT_BIG   = AppKit.NSFont.systemFontOfSize_(64)
 FONT_MED   = AppKit.NSFont.systemFontOfSize_(56)
 FONT_SMALL = AppKit.NSFont.systemFontOfSize_(24)
 PREFIX = "Problems left before Zohar can waste her time on YouTube: "
+STRIKE_PREFIX = "Strikes: "
 
 OPS = [
     ('+',  lambda a, b: a + b),
@@ -37,11 +39,9 @@ def new_question():
         a, b = random.randint(2, 12), random.randint(2, 12)
     elif op == '÷':
         flag = False
-        while not flag:
-            b = random.randint(3, 7)
-            q = random.randint(1, 25)          # quotient
-            a = b * q                         # ensures a ÷ b == integer
-            if a != b: flag = True
+        b = random.randint(3, 7)
+        q = random.randint(2, 25)          # quotient
+        a = b * q                         # ensures a ÷ b == integer
 
     else: # addition or subtraction
         flag = False
@@ -177,6 +177,15 @@ class Delegate(NSObject):
         self.scroll_view.setDocumentView_(self.ans_field)
         content.addSubview_(self.scroll_view)
 
+        # Failure label (hidden by default)
+        self.failed_label = AppKit.NSTextField.labelWithString_("Problem Failed")
+        self.failed_label.setFrame_(((0, screen.size.height/2 - 50), (screen.size.width, 100)))
+        self.failed_label.setFont_(FONT_BIG)
+        self.failed_label.setAlignment_(AppKit.NSCenterTextAlignment)
+        self.failed_label.setTextColor_(AppKit.NSColor.whiteColor())
+        self.failed_label.setHidden_(True)
+        content.addSubview_(self.failed_label)
+
         # Activate the running app and bring window to front
         AppKit.NSRunningApplication.currentApplication()\
             .activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
@@ -243,9 +252,14 @@ class Delegate(NSObject):
                 return
             self.next_q()
         else:
-            self.flash_(False)
+            self.wrong_answers += 1
             self.ans_field.setString_("")
-            self.establish_focus()
+            if self.wrong_answers >= FAIL_THRESHOLD:
+                self.show_failure()
+            else:
+                self.flash_(False)
+                self.establish_focus()
+                self.update_counter()
 
     # Feedback flash
     def flash_(self, ok: bool):
@@ -256,16 +270,43 @@ class Delegate(NSObject):
     def resetColor_(self, timer):
         self.window.setBackgroundColor_(AppKit.NSColor.blackColor())
 
+    def show_failure(self):
+        """Show 'Problem Failed' and flash red thrice"""
+        self.scroll_view.setHidden_(True)
+        self.failed_label.setHidden_(False)
+        self.failed_label.displayIfNeeded()
+        
+        self.flash_count = 0
+        self.failure_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.70, self, 'failureFlash:', None, True)
+        self.failureFlash_(self.failure_timer)
+
+    def failureFlash_(self, timer):
+        if self.flash_count % 2 == 0:
+            self.window.setBackgroundColor_(AppKit.NSColor.redColor())
+        else:
+            self.window.setBackgroundColor_(AppKit.NSColor.blackColor())
+        
+        self.flash_count += 1
+        if self.flash_count >= 6:
+            timer.invalidate()
+            self.failed_label.setHidden_(True)
+            self.scroll_view.setHidden_(False)
+            self.wrong_answers = 0
+            self.remaining += 1
+            self.update_counter()
+
     # Counter
     def update_counter(self):
-        text = PREFIX + str(self.remaining)
+        text = PREFIX + str(self.remaining) + "\n" + STRIKE_PREFIX + str(self.wrong_answers) + " / " + str(FAIL_THRESHOLD)
         attr = {AppKit.NSFontAttributeName: FONT_SMALL}
         width = NSString.stringWithString_(text).sizeWithAttributes_(attr).width + 20
         screen = AppKit.NSScreen.mainScreen().frame()
-        self.counter.setFrame_(((screen.size.width - width, screen.size.height - 40), (width, 30)))
+        self.counter.setFrame_(((screen.size.width - width, screen.size.height - 70), (width, 60)))
         self.counter.setStringValue_(text)
 
     def next_q(self):
+        self.wrong_answers = 0
         q, self.answer = new_question()
         self.q_label.setStringValue_(q)
         self.ans_field.setString_("")
